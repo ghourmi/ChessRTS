@@ -5,6 +5,7 @@ public class Tile
     public int x, y;
     public bool isDark;
     public Piece occupant;
+    public Piece reservedBy;
 
     // Runtime visual
     public GameObject tileGO;

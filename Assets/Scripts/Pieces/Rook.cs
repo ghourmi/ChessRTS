@@ -1,24 +1,36 @@
 using System.Collections.Generic;
+using UnityEngine;
 
 public class Rook : Piece
 {
-    public Rook(Team team, int x, int y, BoardManager board) 
+    public Rook(Team team, int x, int y, BoardManager board)
         : base(PieceType.Rook, team, x, y, board) { }
 
-    public override List<Tile> GetLegalMoves()
+    // ---------------------------------------------------------
+    // Rook: een zet = alle tiles in dezelfde rechte lijn
+    // ---------------------------------------------------------
+    public override bool IsValidStep(Tile from, Tile to)
     {
-        List<Tile> moves = new List<Tile>();
+        // Zelfde rij of zelfde kolom = 1 zet
+        return (from.x == to.x) || (from.y == to.y);
+    }
+
+    // ---------------------------------------------------------
+    // Movement neighbors voor BFS
+    // ---------------------------------------------------------
+    public override List<Tile> GetMovementNeighbors(Tile from)
+    {
+        List<Tile> neighbors = new List<Tile>();
+
         int[] dx = { 1, -1, 0, 0 };
         int[] dy = { 0, 0, 1, -1 };
 
-        int maxSteps = 7; // maximaal aantal stappen rook mag vooruit
-
         for (int dir = 0; dir < 4; dir++)
         {
-            int nx = x;
-            int ny = y;
+            int nx = from.x;
+            int ny = from.y;
 
-            for (int step = 0; step < maxSteps; step++)
+            while (true)
             {
                 nx += dx[dir];
                 ny += dy[dir];
@@ -26,20 +38,22 @@ public class Rook : Piece
                 Tile t = board.GetTile(nx, ny);
                 if (t == null) break;
 
-                if (t.occupant == null)
-                {
-                    moves.Add(t);
-                }
-                else
+                if (t.occupant != null)
                 {
                     if (t.occupant.team != team)
-                        moves.Add(t); // kan capture
+                        neighbors.Add(t);
                     break;
                 }
+
+                neighbors.Add(t);
             }
         }
 
-        return moves;
+        return neighbors;
     }
 
+    public override List<Tile> GetLegalMoves()
+    {
+        return GetMovementNeighbors(board.GetTile(x, y));
+    }
 }

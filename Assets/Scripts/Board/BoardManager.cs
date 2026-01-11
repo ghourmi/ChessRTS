@@ -20,6 +20,7 @@ public class BoardManager : MonoBehaviour
 
     private Piece selectedPiece;
     private List<GameObject> highlightObjects = new List<GameObject>();
+    private HashSet<Tile> reservedTiles = new HashSet<Tile>();
 
     void Awake()
     {
@@ -32,7 +33,7 @@ public class BoardManager : MonoBehaviour
         SpawnVisualBoard();
         CenterCamera();
 
-        TestRook();
+        SetupTestPieces();
     }
 
     // ----------------------
@@ -103,7 +104,7 @@ public class BoardManager : MonoBehaviour
         foreach (Tile t in moves)
         {
             GameObject highlight = new GameObject($"Highlight_{t.x}_{t.y}");
-            highlight.transform.position = new Vector3(t.x * tileSize + tileSize / 2f, t.y * tileSize + tileSize / 2f, -0.5f);
+            highlight.transform.position = new Vector3(t.x * tileSize, t.y * tileSize, -0.5f);
             SpriteRenderer sr = highlight.AddComponent<SpriteRenderer>();
             sr.color = new Color(0f, 1f, 0f, 0.5f);
             sr.sprite = tilePrefab.GetComponent<SpriteRenderer>().sprite;
@@ -112,8 +113,8 @@ public class BoardManager : MonoBehaviour
 
             highlightObjects.Add(highlight);
 
-            TileClick tc = highlight.AddComponent<TileClick>();
-            tc.tile = t;
+            HighlightClick hc = highlight.AddComponent<HighlightClick>();
+            hc.targetTile = t;
         }
     }
 
@@ -126,62 +127,86 @@ public class BoardManager : MonoBehaviour
 
     public void OnTileClicked(Tile targetTile)
     {
-        if (selectedPiece == null) return;
-
-        List<Tile> path = CalculatePath(selectedPiece, targetTile);
-
-        if (path.Count == 0)
-        {
-            Debug.Log("Illegal move!");
+        if (selectedPiece == null || targetTile == null)
             return;
+
+        bool isDefenceMode = selectedPiece.moveMode == MoveMode.Defence;
+        List<Tile> path = CalculatePath(selectedPiece, targetTile, isDefenceMode);
+        if (path.Count == 0) return;
+
+        // 🔒 RESERVEER PAD
+        foreach (Tile t in path)
+        {
+            if (t.occupant != null || t.reservedBy != null)
+            {
+                Debug.Log("Path blocked / reserved");
+                return;
+            }
         }
 
-        StartCoroutine(MoveAlongPath(selectedPiece, path));
+        foreach (Tile t in path)
+            t.reservedBy = selectedPiece;
+
+        Tile reservedTarget = path[path.Count - 1];
+        StartCoroutine(MoveAlongPath(selectedPiece, path, reservedTarget));
 
         selectedPiece = null;
         ClearHighlights();
     }
 
-    IEnumerator MoveAlongPath(Piece piece, List<Tile> path)
+    IEnumerator MoveAlongPath(Piece piece, List<Tile> path, Tile reservedTarget)
     {
         foreach (Tile t in path)
         {
+            // stop als tile plots bezet is
+            if (t.occupant != null && t.occupant != piece)
+                break;
+
             Vector3 targetPos = new Vector3(
-                t.x * tileSize,
-                t.y * tileSize,
+                t.x * piece.board.tileSize,
+                t.y * piece.board.tileSize,
                 piece.view.transform.position.z
             );
 
             while ((piece.view.transform.position - targetPos).sqrMagnitude > 0.001f)
             {
-                piece.view.transform.position = Vector3.MoveTowards(piece.view.transform.position, targetPos, 3f * Time.deltaTime);
+                piece.view.transform.position =
+                    Vector3.MoveTowards(piece.view.transform.position, targetPos, 3f * Time.deltaTime);
                 yield return null;
             }
 
-            // Board update
-            board[piece.x, piece.y].occupant = null;
-
-            if (t.occupant != null && t.occupant.team != piece.team)
-                Capture(t.occupant);
-
+            // board update
+            piece.board.GetTile(piece.x, piece.y).occupant = null;
             piece.x = t.x;
             piece.y = t.y;
-            board[t.x, t.y].occupant = piece;
+            piece.board.GetTile(t.x, t.y).occupant = piece;
+        }
+
+        // 🔓 vrijgeven
+        foreach (Tile t in path)
+        {
+            if (t.reservedBy == piece)
+                t.reservedBy = null;
         }
     }
 
     void Capture(Piece target)
     {
+        if (target == null) return;
+
         Destroy(target.view.gameObject);
         board[target.x, target.y].occupant = null;
     }
 
+
     // ----------------------
     // Pathfinding
     // ----------------------
-    List<Tile> CalculatePath(Piece piece, Tile target)
+    List<Tile> CalculatePath(Piece piece, Tile target, bool isDefenceMode)
     {
-        // BFS
+        // -------------------------
+        // 1) BFS
+        // -------------------------
         Queue<Tile> frontier = new Queue<Tile>();
         Dictionary<Tile, Tile> cameFrom = new Dictionary<Tile, Tile>();
 
@@ -192,11 +217,15 @@ public class BoardManager : MonoBehaviour
         while (frontier.Count > 0)
         {
             Tile current = frontier.Dequeue();
-            if (current == target) break;
+            if (current == target)
+                break;
 
             foreach (Tile neighbor in GetNeighbors(piece, current))
             {
-                if (!cameFrom.ContainsKey(neighbor) && (neighbor.occupant == null || neighbor == target))
+                if (neighbor == null) continue;
+
+                if (!cameFrom.ContainsKey(neighbor) &&
+                    (neighbor.occupant == null || neighbor == target))
                 {
                     frontier.Enqueue(neighbor);
                     cameFrom[neighbor] = current;
@@ -204,21 +233,39 @@ public class BoardManager : MonoBehaviour
             }
         }
 
-        List<Tile> path = new List<Tile>();
+        // -------------------------
+        // 2) Geen pad gevonden
+        // -------------------------
         if (!cameFrom.ContainsKey(target))
         {
             Debug.LogWarning("No path found to target!");
-            return path;
+            return new List<Tile>();
         }
 
+        // -------------------------
+        // 3) Tile-pad reconstrueren
+        // -------------------------
+        List<Tile> tilePath = new List<Tile>();
         Tile t = target;
+
         while (t != start)
         {
-            path.Insert(0, t);
+            tilePath.Insert(0, t);
             t = cameFrom[t];
         }
 
-        return path;
+        // -------------------------
+        // 4) Tile-pad → echte zetten
+        // -------------------------
+        List<Tile> moves = piece.ConvertPathToMoves(tilePath);
+
+        // -------------------------
+        // 5) Defence mode: 1 zet schrappen
+        // -------------------------
+        if (isDefenceMode)
+            moves = piece.ApplyDefenceMode(moves);
+
+        return moves;
     }
 
     List<Tile> GetNeighbors(Piece piece, Tile current)
@@ -362,27 +409,43 @@ public class BoardManager : MonoBehaviour
         return moves;
     }
 
-    // ----------------------
-    // TEST
-    // ----------------------
-    void TestRook()
-    {
-        Piece rook = new Rook(Team.White, 0, 0, this);
-        board[0, 0].occupant = rook;
+// ----------------------
+// TEST: alle stukken op bord
+// ----------------------
+        void SetupTestPieces()
+        {
+            // Wit
+            PlacePiece(new Rook(Team.White, 0, 0, this));
+            PlacePiece(new Knight(Team.White, 1, 0, this));
+            PlacePiece(new Bishop(Team.White, 2, 0, this));
+            PlacePiece(new King(Team.White, 4, 0, this));
+            PlacePiece(new Pawn(Team.White, 0, 1, this));
+            PlacePiece(new Pawn(Team.White, 1, 1, this));
+            PlacePiece(new Pawn(Team.White, 2, 1, this));
 
-        GameObject pv = Instantiate(pieceViewPrefab, this.transform);
-        pv.transform.position = new Vector3(
-            rook.x * tileSize,
-            rook.y * tileSize,
-            0
-        );
+            // Zwart
+            PlacePiece(new Rook(Team.Black, 0, 7, this));
+            PlacePiece(new Knight(Team.Black, 1, 7, this));
+            PlacePiece(new Bishop(Team.Black, 2, 7, this));
+            PlacePiece(new King(Team.Black, 4, 7, this));
+            PlacePiece(new Pawn(Team.Black, 0, 6, this));
+            PlacePiece(new Pawn(Team.Black, 1, 6, this));
+            PlacePiece(new Pawn(Team.Black, 2, 6, this));
+        }
 
-        PieceView pvScript = pv.GetComponent<PieceView>();
-        rook.view = pvScript;
-        pvScript.piece = rook;
+        // Helper om stuk te plaatsen + view te maken
+        void PlacePiece(Piece piece)
+        {
+            board[piece.x, piece.y].occupant = piece;
 
-        HighlightLegalMoves(rook);
-    }
+            GameObject pv = Instantiate(pieceViewPrefab, this.transform);
+            pv.transform.position = new Vector3(piece.x * tileSize, piece.y * tileSize, 0);
+
+            PieceView pvScript = pv.GetComponent<PieceView>();
+            piece.view = pvScript;
+            pvScript.piece = piece;
+        }
+
 
     // ----------------------
     // Get tile helper
