@@ -13,16 +13,8 @@ public class TileClick : MonoBehaviour
         }
 
         BoardManager bm = BoardManager.Instance;
+        
+        bm.OnTileClicked(tile);
 
-        // Klik op een stuk → selecteer
-        if (tile.occupant != null)
-        {
-            bm.SelectPiece(tile.occupant);
-        }
-        // Klik op leeg vak → probeer verplaatsen
-        else
-        {
-            bm.OnTileClicked(tile);
-        }
     }
 }

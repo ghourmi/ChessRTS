@@ -1,0 +1,73 @@
+User
+  |
+  | 1. Klik op een stuk
+  v
+PieceView.OnMouseDown(pieceView)
+  |
+  |---> piece = pieceView.piece
+  |
+  | 2. Stuur selectie naar BoardManager
+  |-----------------------------------------------> BoardManager.SelectPiece(piece)
+  |                                                   |
+  |                                                   |---> BoardManager.selectedPiece = piece
+  |                                                   |
+  |                                                   |---> pieceView.SetSelected(true)
+  |                                                   |
+  |                                                   '---> BoardManager.ClearHighlights()
+  |
+  | 3. Vraag highlight van legale moves
+  |-----------------------------------------------> BoardManager.HighlightLegalMoves(piece)
+                                                      |
+                                                      |---> moves = piece.GetLegalMoves()
+                                                      |         |
+                                                      |         |---> piece.GetMovementNeighbors()
+                                                      |         |---> piece.IsValidStep()
+                                                      |         '---> BoardManager.GetTile(x,y)
+                                                      |
+                                                      |---> voor elke move:
+                                                      |         |
+                                                      |         '---> Tile.SetHighlight(true)
+                                                      |
+                                                      '---> BoardManager.highlightedTiles = tiles
+                                                      
+User
+  |
+  | 4. Klik op een highlight tile
+  v
+HighlightClick.OnMouseDown(highlightTile)
+  |
+  | 5. Stuur tile-click naar BoardManager
+  |--------------> BoardManager.OnTileClicked(tile)
+                    |
+                    |---> if tile not in highlightedTiles: return
+                    |
+                    |---> targetTile = tile
+                    |
+                    '---> BoardManager.CalculatePath(piece, targetTile, piece.moveMode)
+                                |
+                                |---> neighbors = BoardManager.GetNeighbors(piece, current)
+                                |---> path = A*-achtige logica
+                                |
+                                '---> BoardManager.MoveAlongPath(piece, path, reservedTarget)
+                                                  |
+                                                  |---> moves = piece.ConvertPathToMoves(path)
+                                                  |         |
+                                                  |         '---> per stap: (dx,dy) berekenen
+                                                  |
+                                                  |---> if piece.moveMode == Defence:
+                                                  |         |
+                                                  |         '---> moves = piece.ApplyDefenceMode(moves)
+                                                  |
+                                                  |---> voor elke move in moves:
+                                                  |         |
+                                                  |         |---> oldTile = BoardManager.GetTile(piece.x, piece.y)
+                                                  |         |---> newTile = BoardManager.GetTile(nx, ny)
+                                                  |         |
+                                                  |         |---> oldTile.occupant = null
+                                                  |         |---> newTile.occupant = piece
+                                                  |         |
+                                                  |         '---> piece.x = nx ; piece.y = ny
+                                                  |
+                                                  '---> BoardManager.ClearHighlights()
+                                                                     |
+                                                                     '---> Tile.SetHighlight(false) voor alle tiles

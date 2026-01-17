@@ -4,7 +4,7 @@ using UnityEngine;
 
 public class BoardManager : MonoBehaviour
 {
-    public static BoardManager Instance; // singleton
+    public static BoardManager Instance;
 
     [Header("Board Settings")]
     public int width = 8;
@@ -18,9 +18,12 @@ public class BoardManager : MonoBehaviour
     [HideInInspector]
     public Tile[,] board;
 
+    public List<Piece> pieces = new List<Piece>();
+
     private Piece selectedPiece;
     private List<GameObject> highlightObjects = new List<GameObject>();
-    private HashSet<Tile> reservedTiles = new HashSet<Tile>();
+
+    public Piece CurrentPiece { get; private set; }
 
     void Awake()
     {
@@ -29,56 +32,17 @@ public class BoardManager : MonoBehaviour
 
     void Start()
     {
-        GenerateBoard();
-        SpawnVisualBoard();
+        Debug.Log("[Board] Start");
+        BoardGenerator generator = new BoardGenerator(width, height, tileSize, tilePrefab);
+        board = generator.GenerateBoard();
+        generator.SpawnVisualBoard(board, this.transform);
         CenterCamera();
-
         SetupTestPieces();
-    }
-
-    // ----------------------
-    // Board generation
-    // ----------------------
-    void GenerateBoard()
-    {
-        board = new Tile[width, height];
-
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                bool isDark = (x + y) % 2 == 1;
-                board[x, y] = new Tile(x, y, isDark);
-            }
-        }
-    }
-
-    void SpawnVisualBoard()
-    {
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                GameObject tileGO = Instantiate(tilePrefab, this.transform);
-                tileGO.transform.position = new Vector3(x * tileSize, y * tileSize, 0);
-                tileGO.name = $"Tile_{x}_{y}";
-
-                SpriteRenderer sr = tileGO.GetComponent<SpriteRenderer>();
-                sr.color = board[x, y].isDark
-                    ? new Color(0.35f, 0.35f, 0.35f)
-                    : new Color(0.8f, 0.8f, 0.8f);
-
-                if (tileGO.GetComponent<Collider2D>() == null)
-                    tileGO.AddComponent<BoxCollider2D>();
-
-                TileClick tc = tileGO.AddComponent<TileClick>();
-                tc.tile = board[x, y];
-            }
-        }
     }
 
     void CenterCamera()
     {
+        Debug.Log("[Board] CenterCamera");
         Camera.main.transform.position = new Vector3(
             (width - 1) * tileSize / 2f,
             (height - 1) * tileSize / 2f,
@@ -86,35 +50,83 @@ public class BoardManager : MonoBehaviour
         );
     }
 
-    // ----------------------
-    // Piece selection & movement
-    // ----------------------
+    // ---------------------------------------------------------
+    // SELECTIE
+    // ---------------------------------------------------------
+
+    public void SelectPieceType(PieceType type)
+    {
+        CurrentPiece = pieces.Find(p => p.type == type && p.team == Team.White);
+
+        if (CurrentPiece == null)
+        {
+            Debug.LogWarning("[SelectPieceType] No piece of type " + type + " found!");
+            return;
+        }
+
+        selectedPiece = CurrentPiece;
+        HighlightLegalMoves(CurrentPiece);
+
+        Debug.Log($"[SelectPieceType] Selected: {type} | Mode: {CurrentPiece.moveMode} at ({CurrentPiece.x},{CurrentPiece.y})");
+    }
+
     public void SelectPiece(Piece piece)
     {
+        Debug.Log($"[SelectPiece] Clicked on {piece.type} {piece.team} at ({piece.x},{piece.y})");
+
+        // CASE 1 — Je hebt een defender geselecteerd en klikt op een friendly piece
+        if (CurrentPiece != null &&
+            CurrentPiece.moveMode == MoveMode.Defence &&
+            piece.team == Team.White &&               // alleen jouw team
+            piece != CurrentPiece)                    // niet zichzelf
+        {
+            CurrentPiece.defendTarget = piece;
+            Debug.Log($"[SelectPiece] {CurrentPiece.type} is now defending {piece.type}");
+            return; // NIET selecteren, NIET highlighten
+        }
+
+        // CASE 2 — Normale selectie
+        if (piece.defendTarget != null)
+            Debug.Log($"[SelectPiece] Clearing old defendTarget of {piece.type}");
+
+        piece.defendTarget = null;
+
         selectedPiece = piece;
+        CurrentPiece = piece;
+        Debug.Log($"[SelectPiece] Selected {piece.type} at ({piece.x},{piece.y}) | Mode: {piece.moveMode}");
         HighlightLegalMoves(piece);
     }
 
-    public void HighlightLegalMoves(Piece piece)
+    // ---------------------------------------------------------
+    // HIGHLIGHTING
+    // ---------------------------------------------------------
+
+    public void   HighlightLegalMoves(Piece piece)
     {
         ClearHighlights();
 
         List<Tile> moves = piece.GetLegalMoves();
+        Debug.Log($"[HighlightLegalMoves] {piece.type} has {moves.Count} legal moves (mode: {piece.moveMode})");
 
         foreach (Tile t in moves)
         {
             GameObject highlight = new GameObject($"Highlight_{t.x}_{t.y}");
             highlight.transform.position = new Vector3(t.x * tileSize, t.y * tileSize, -0.5f);
+
             SpriteRenderer sr = highlight.AddComponent<SpriteRenderer>();
             sr.color = new Color(0f, 1f, 0f, 0.5f);
             sr.sprite = tilePrefab.GetComponent<SpriteRenderer>().sprite;
             sr.sortingOrder = 100;
             sr.transform.localScale = Vector3.one * 0.9f;
 
-            highlightObjects.Add(highlight);
+            highlight.layer = LayerMask.NameToLayer("Ignore Raycast");
+            Collider2D col = highlight.GetComponent<Collider2D>();
+            if (col != null) Destroy(col);
 
-            HighlightClick hc = highlight.AddComponent<HighlightClick>();
-            hc.targetTile = t;
+            // HighlightClick hc = highlight.AddComponent<HighlightClick>();
+            // hc.targetTile = t;
+
+            highlightObjects.Add(highlight);
         }
     }
 
@@ -122,24 +134,51 @@ public class BoardManager : MonoBehaviour
     {
         foreach (GameObject go in highlightObjects)
             Destroy(go);
+
         highlightObjects.Clear();
     }
 
+    // ---------------------------------------------------------
+    // TILE CLICK
+    // ---------------------------------------------------------
+
     public void OnTileClicked(Tile targetTile)
     {
+        Debug.Log($"[OnTileClicked] tile ({targetTile?.x},{targetTile?.y}), selectedPiece = {selectedPiece?.type}");
+
         if (selectedPiece == null || targetTile == null)
+        {
+            Debug.Log("[OnTileClicked] Early return: selectedPiece or targetTile null");
             return;
+        }
+
+        // Als ik een tile klik, verbreek ik verdedigen (alleen als dit zelf een defender is)
+        if (selectedPiece.defendTarget != null)
+        {
+            Debug.Log($"[OnTileClicked] {selectedPiece.type} stopt met verdedigen {selectedPiece.defendTarget.type}");
+            selectedPiece.defendTarget = null;
+        }
 
         bool isDefenceMode = selectedPiece.moveMode == MoveMode.Defence;
-        List<Tile> path = CalculatePath(selectedPiece, targetTile, isDefenceMode);
-        if (path.Count == 0) return;
+        Debug.Log($"[OnTileClicked] {selectedPiece.type} moving in mode {selectedPiece.moveMode} to ({targetTile.x},{targetTile.y})");
 
-        // 🔒 RESERVEER PAD
+        List<Tile> path = CalculatePath(selectedPiece, targetTile, isDefenceMode);
+        Debug.Log($"[OnTileClicked] Path length = {path.Count}");
+
+        if (path.Count == 0)
+        {
+            Debug.Log("[OnTileClicked] No path, aborting move");
+            return;
+        }
+
         foreach (Tile t in path)
         {
-            if (t.occupant != null || t.reservedBy != null)
+            if (
+                (t.occupant != null && t.occupant != selectedPiece.defendTarget) ||
+                (t.reservedBy != null && t.reservedBy != selectedPiece.defendTarget)
+            )
             {
-                Debug.Log("Path blocked / reserved");
+                Debug.Log($"[OnTileClicked] Path blocked / reserved at ({t.x},{t.y}) by {t.occupant?.type} / reservedBy {t.reservedBy?.type}");
                 return;
             }
         }
@@ -148,23 +187,33 @@ public class BoardManager : MonoBehaviour
             t.reservedBy = selectedPiece;
 
         Tile reservedTarget = path[path.Count - 1];
+        Debug.Log($"[OnTileClicked] Starting MoveAlongPath for {selectedPiece.type} to ({reservedTarget.x},{reservedTarget.y})");
         StartCoroutine(MoveAlongPath(selectedPiece, path, reservedTarget));
 
         selectedPiece = null;
         ClearHighlights();
     }
 
+    // ---------------------------------------------------------
+    // MOVEMENT
+    // ---------------------------------------------------------
+
     IEnumerator MoveAlongPath(Piece piece, List<Tile> path, Tile reservedTarget)
     {
+        Debug.Log($"[MoveAlongPath] START {piece.type} from ({piece.x},{piece.y}) to ({reservedTarget.x},{reservedTarget.y}), steps: {path.Count}");
+
+        // --- MAIN MOVEMENT LOOP ---
         foreach (Tile t in path)
         {
-            // stop als tile plots bezet is
-            if (t.occupant != null && t.occupant != piece)
+            if (t.occupant != null && t.occupant != piece && t.occupant != piece.defendTarget)
+            {
+                Debug.Log($"[MoveAlongPath] Blocked at ({t.x},{t.y}) by {t.occupant.type}, breaking");
                 break;
+            }
 
             Vector3 targetPos = new Vector3(
-                t.x * piece.board.tileSize,
-                t.y * piece.board.tileSize,
+                t.x * tileSize,
+                t.y * tileSize,
                 piece.view.transform.position.z
             );
 
@@ -175,38 +224,68 @@ public class BoardManager : MonoBehaviour
                 yield return null;
             }
 
-            // board update
-            piece.board.GetTile(piece.x, piece.y).occupant = null;
+            Debug.Log($"[MoveAlongPath] {piece.type} reached tile ({t.x},{t.y})");
+
+            board[piece.x, piece.y].occupant = null;
             piece.x = t.x;
             piece.y = t.y;
-            piece.board.GetTile(t.x, t.y).occupant = piece;
+            board[t.x, t.y].occupant = piece;
         }
 
-        // 🔓 vrijgeven
+        // --- CLEAR RESERVATIONS ---
         foreach (Tile t in path)
         {
             if (t.reservedBy == piece)
                 t.reservedBy = null;
         }
+
+        Debug.Log($"[MoveAlongPath] {piece.type} finished at ({piece.x},{piece.y}). Checking defenders...");
+
+        // --- DEFENDER FOLLOW-UP ---
+        foreach (Piece p in pieces)
+        {
+            if (p.defendTarget == piece)
+            {
+                Debug.Log($"[MoveAlongPath] Defender FOUND: {p.type} at ({p.x},{p.y}) defending {piece.type}");
+
+                // 1) Pathfind naar de exacte eindtile van het target (zonder defence mode)
+                List<Tile> rawPath = CalculatePath(p, reservedTarget, false);
+                Debug.Log($"[MoveAlongPath] Defender {p.type} raw path length: {rawPath.Count}");
+
+                if (rawPath.Count == 0)
+                {
+                    Debug.Log($"[MoveAlongPath] Defender {p.type} has NO path toward ({reservedTarget.x},{reservedTarget.y})");
+                    continue;
+                }
+
+                // 2) Defence-mode toepassen → laatste stap wegknippen
+                rawPath = p.ApplyDefenceMode(rawPath);
+                Debug.Log($"[MoveAlongPath] Defender {p.type} defence-trimmed path length: {rawPath.Count}");
+
+                if (rawPath.Count == 0)
+                {
+                    Debug.Log($"[MoveAlongPath] Defender {p.type} cannot get 1 tile away from target");
+                    continue;
+                }
+
+                Tile defenderEnd = rawPath[rawPath.Count - 1];
+                Debug.Log($"[MoveAlongPath] Defender {p.type} will end at ({defenderEnd.x},{defenderEnd.y})");
+
+                StartCoroutine(MoveAlongPath(p, rawPath, defenderEnd));
+            }
+        }
+
+        Debug.Log($"[MoveAlongPath] END {piece.type}");
     }
 
-    void Capture(Piece target)
-    {
-        if (target == null) return;
+    // ---------------------------------------------------------
+    // PATHFINDING
+    // ---------------------------------------------------------
 
-        Destroy(target.view.gameObject);
-        board[target.x, target.y].occupant = null;
-    }
-
-
-    // ----------------------
-    // Pathfinding
-    // ----------------------
     List<Tile> CalculatePath(Piece piece, Tile target, bool isDefenceMode)
     {
-        // -------------------------
-        // 1) BFS
-        // -------------------------
+        Debug.Log($"[CalculatePath] {piece.type} from ({piece.x},{piece.y}) to ({target.x},{target.y}), defenceMode={isDefenceMode}");
+
         Queue<Tile> frontier = new Queue<Tile>();
         Dictionary<Tile, Tile> cameFrom = new Dictionary<Tile, Tile>();
 
@@ -220,31 +299,30 @@ public class BoardManager : MonoBehaviour
             if (current == target)
                 break;
 
-            foreach (Tile neighbor in GetNeighbors(piece, current))
+            foreach (Tile neighbor in piece.GetMovementNeighbors(current))
             {
                 if (neighbor == null) continue;
 
                 if (!cameFrom.ContainsKey(neighbor) &&
-                    (neighbor.occupant == null || neighbor == target))
+                    (
+                        neighbor.occupant == null ||
+                        neighbor == target ||
+                        neighbor.occupant == piece.defendTarget || neighbor == target
+
+                    ))
                 {
-                    frontier.Enqueue(neighbor);
                     cameFrom[neighbor] = current;
+                    frontier.Enqueue(neighbor);
                 }
             }
         }
 
-        // -------------------------
-        // 2) Geen pad gevonden
-        // -------------------------
         if (!cameFrom.ContainsKey(target))
         {
-            Debug.LogWarning("No path found to target!");
+            Debug.LogWarning($"[CalculatePath] No path found for {piece.type} to ({target.x},{target.y})");
             return new List<Tile>();
         }
 
-        // -------------------------
-        // 3) Tile-pad reconstrueren
-        // -------------------------
         List<Tile> tilePath = new List<Tile>();
         Tile t = target;
 
@@ -254,205 +332,72 @@ public class BoardManager : MonoBehaviour
             t = cameFrom[t];
         }
 
-        // -------------------------
-        // 4) Tile-pad → echte zetten
-        // -------------------------
+        Debug.Log($"[CalculatePath] Raw path length (tiles) = {tilePath.Count}");
+
         List<Tile> moves = piece.ConvertPathToMoves(tilePath);
+        Debug.Log($"[CalculatePath] ConvertPathToMoves -> {moves.Count} moves (before defence)");
 
-        // -------------------------
-        // 5) Defence mode: 1 zet schrappen
-        // -------------------------
         if (isDefenceMode)
+        {
             moves = piece.ApplyDefenceMode(moves);
+            Debug.Log($"[CalculatePath] After ApplyDefenceMode -> {moves.Count} moves");
+        }
 
         return moves;
     }
 
-    List<Tile> GetNeighbors(Piece piece, Tile current)
-    {
-        List<Tile> neighbors = new List<Tile>();
+    // ---------------------------------------------------------
+    // MOVEMENT RULES
+    // ---------------------------------------------------------
 
-        switch (piece.type)
-        {
-            case PieceType.Rook:
-                neighbors.AddRange(GetRookMoves(current, piece));
-                break;
-            case PieceType.Bishop:
-                neighbors.AddRange(GetBishopMoves(current, piece));
-                break;
-            case PieceType.Knight:
-                neighbors.AddRange(GetKnightMoves(current, piece));
-                break;
-            case PieceType.King:
-                neighbors.AddRange(GetKingMoves(current, piece));
-                break;
-            case PieceType.Pawn:
-                neighbors.AddRange(GetPawnMoves(current, piece));
-                break;
-        }
+    // List<Tile> GetNeighbors(Piece piece, Tile current)
+    // {
+    //     List<Tile> neighbors = piece.GetMovementNeighbors(current);
+    //     return neighbors;
+    // }
 
-        return neighbors;
-    }
+    // ---------------------------------------------------------
+    // HELPERS
+    // ---------------------------------------------------------
 
-    // ----------------------
-    // Movement rules helpers
-    // ----------------------
-    List<Tile> GetRookMoves(Tile current, Piece piece)
-    {
-        List<Tile> moves = new List<Tile>();
-        int[] dx = { 1, -1, 0, 0 };
-        int[] dy = { 0, 0, 1, -1 };
-
-        for (int dir = 0; dir < 4; dir++)
-        {
-            int nx = current.x;
-            int ny = current.y;
-            while (true)
-            {
-                nx += dx[dir];
-                ny += dy[dir];
-                Tile t = GetTile(nx, ny);
-                if (t == null) break;
-                if (t.occupant != null)
-                {
-                    if (t.occupant.team == piece.team) break;
-                    moves.Add(t);
-                    break;
-                }
-                moves.Add(t);
-            }
-        }
-        return moves;
-    }
-
-    List<Tile> GetBishopMoves(Tile current, Piece piece)
-    {
-        List<Tile> moves = new List<Tile>();
-        int[] dx = { 1, 1, -1, -1 };
-        int[] dy = { 1, -1, 1, -1 };
-
-        for (int dir = 0; dir < 4; dir++)
-        {
-            int nx = current.x;
-            int ny = current.y;
-            while (true)
-            {
-                nx += dx[dir];
-                ny += dy[dir];
-                Tile t = GetTile(nx, ny);
-                if (t == null) break;
-                if (t.occupant != null)
-                {
-                    if (t.occupant.team == piece.team) break;
-                    moves.Add(t);
-                    break;
-                }
-                moves.Add(t);
-            }
-        }
-        return moves;
-    }
-
-    List<Tile> GetKnightMoves(Tile current, Piece piece)
-    {
-        List<Tile> moves = new List<Tile>();
-        int[] dx = {1,2,2,1,-1,-2,-2,-1};
-        int[] dy = {2,1,-1,-2,2,1,-1,-2};
-
-        for(int i=0;i<8;i++)
-        {
-            Tile t = GetTile(current.x + dx[i], current.y + dy[i]);
-            if(t != null && (t.occupant == null || t.occupant.team != piece.team))
-                moves.Add(t);
-        }
-        return moves;
-    }
-
-    List<Tile> GetKingMoves(Tile current, Piece piece)
-    {
-        List<Tile> moves = new List<Tile>();
-        for(int dx=-1; dx<=1; dx++)
-        {
-            for(int dy=-1; dy<=1; dy++)
-            {
-                if(dx==0 && dy==0) continue;
-                Tile t = GetTile(current.x + dx, current.y + dy);
-                if(t != null && (t.occupant == null || t.occupant.team != piece.team))
-                    moves.Add(t);
-            }
-        }
-        return moves;
-    }
-
-    List<Tile> GetPawnMoves(Tile current, Piece piece)
-    {
-        List<Tile> moves = new List<Tile>();
-        int dir = piece.team == Team.White ? 1 : -1;
-
-        // 1 vooruit
-        Tile fwd = GetTile(current.x, current.y + dir);
-        if(fwd != null && fwd.occupant == null) moves.Add(fwd);
-
-        // 2 vooruit vanaf start
-        if((piece.team == Team.White && current.y==1) || (piece.team == Team.Black && current.y==6))
-        {
-            Tile fwd2 = GetTile(current.x, current.y + 2*dir);
-            if(fwd2 != null && fwd2.occupant == null) moves.Add(fwd2);
-        }
-
-        // Captures
-        Tile capL = GetTile(current.x - 1, current.y + dir);
-        Tile capR = GetTile(current.x + 1, current.y + dir);
-        if(capL != null && capL.occupant != null && capL.occupant.team != piece.team) moves.Add(capL);
-        if(capR != null && capR.occupant != null && capR.occupant.team != piece.team) moves.Add(capR);
-
-        return moves;
-    }
-
-// ----------------------
-// TEST: alle stukken op bord
-// ----------------------
-        void SetupTestPieces()
-        {
-            // Wit
-            PlacePiece(new Rook(Team.White, 0, 0, this));
-            PlacePiece(new Knight(Team.White, 1, 0, this));
-            PlacePiece(new Bishop(Team.White, 2, 0, this));
-            PlacePiece(new King(Team.White, 4, 0, this));
-            PlacePiece(new Pawn(Team.White, 0, 1, this));
-            PlacePiece(new Pawn(Team.White, 1, 1, this));
-            PlacePiece(new Pawn(Team.White, 2, 1, this));
-
-            // Zwart
-            PlacePiece(new Rook(Team.Black, 0, 7, this));
-            PlacePiece(new Knight(Team.Black, 1, 7, this));
-            PlacePiece(new Bishop(Team.Black, 2, 7, this));
-            PlacePiece(new King(Team.Black, 4, 7, this));
-            PlacePiece(new Pawn(Team.Black, 0, 6, this));
-            PlacePiece(new Pawn(Team.Black, 1, 6, this));
-            PlacePiece(new Pawn(Team.Black, 2, 6, this));
-        }
-
-        // Helper om stuk te plaatsen + view te maken
-        void PlacePiece(Piece piece)
-        {
-            board[piece.x, piece.y].occupant = piece;
-
-            GameObject pv = Instantiate(pieceViewPrefab, this.transform);
-            pv.transform.position = new Vector3(piece.x * tileSize, piece.y * tileSize, 0);
-
-            PieceView pvScript = pv.GetComponent<PieceView>();
-            piece.view = pvScript;
-            pvScript.piece = piece;
-        }
-
-
-    // ----------------------
-    // Get tile helper
-    // ----------------------
     public Tile GetTile(int x, int y)
     {
         if (x < 0 || y < 0 || x >= width || y >= height) return null;
         return board[x, y];
+    }
+
+    void SetupTestPieces()
+    {
+        Debug.Log("[Board] SetupTestPieces");
+        PlacePiece(new Rook(Team.White, 0, 0, this));
+        PlacePiece(new Knight(Team.White, 1, 0, this));
+        PlacePiece(new Bishop(Team.White, 2, 0, this));
+        PlacePiece(new King(Team.White, 4, 0, this));
+        PlacePiece(new Pawn(Team.White, 0, 1, this));
+        PlacePiece(new Pawn(Team.White, 1, 1, this));
+        PlacePiece(new Pawn(Team.White, 2, 1, this));
+
+        PlacePiece(new Rook(Team.Black, 0, 7, this));
+        PlacePiece(new Knight(Team.Black, 1, 7, this));
+        PlacePiece(new Bishop(Team.Black, 2, 7, this));
+        PlacePiece(new King(Team.Black, 4, 7, this));
+        PlacePiece(new Pawn(Team.Black, 0, 6, this));
+        PlacePiece(new Pawn(Team.Black, 1, 6, this));
+        PlacePiece(new Pawn(Team.Black, 2, 6, this));
+    }
+
+    void PlacePiece(Piece piece)
+    {
+        pieces.Add(piece);
+        board[piece.x, piece.y].occupant = piece;
+
+        GameObject pv = Instantiate(pieceViewPrefab, this.transform);
+        pv.transform.position = new Vector3(piece.x * tileSize, piece.y * tileSize, 0);
+
+        PieceView pvScript = pv.GetComponent<PieceView>();
+        piece.view = pvScript;
+        pvScript.piece = piece;
+
+        Debug.Log($"[PlacePiece] Placed {piece.type} {piece.team} at ({piece.x},{piece.y})");
     }
 }

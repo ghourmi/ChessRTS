@@ -23,6 +23,9 @@ public abstract class Piece
     public Team team;
     public BoardManager board;
     public PieceView view;
+    public Piece defendTarget;
+
+    // Huidige modus van het stuk (A/D verandert dit)
     public MoveMode moveMode;
 
     public Piece(PieceType type, Team team, int x, int y, BoardManager board)
@@ -32,26 +35,41 @@ public abstract class Piece
         this.x = x;
         this.y = y;
         this.board = board;
+
+        // Default startmodus
         this.moveMode = MoveMode.Defence;
     }
 
     // ---------------------------------------------------------
-    // 1) Bepaalt of een tile-overgang een echte zet is
+    // 1) Wisselen tussen modi (A/D)
+    // ---------------------------------------------------------
+    public void NextMode()
+    {
+        moveMode = MoveMode.Offence;
+    }
+
+    public void PreviousMode()
+    {
+        moveMode = MoveMode.Defence;
+    }
+
+    // ---------------------------------------------------------
+    // 2) Bepaalt of een tile-overgang een echte zet is
     // ---------------------------------------------------------
     public virtual bool IsValidStep(Tile from, Tile to)
     {
-        // Default: lineaire stukken → elke tile in dezelfde richting is 1 zet
+        // Default: elke tile is 1 zet (pion/koning)
         return true;
     }
 
-    // Knight override
+    // Knight override helper
     public virtual bool IsKnight()
     {
         return type == PieceType.Knight;
     }
 
     // ---------------------------------------------------------
-    // 2) Converteert BFS-pad naar echte zetten
+    // 3) Converteert BFS-pad naar echte zetten
     // ---------------------------------------------------------
     public List<Tile> ConvertPathToMoves(List<Tile> path)
     {
@@ -71,14 +89,14 @@ public abstract class Piece
     }
 
     // ---------------------------------------------------------
-    // 3) Defence mode: 1 zet voor het doel stoppen
+    // 4) Defence mode: 1 zet voor het doel stoppen
     // ---------------------------------------------------------
     public List<Tile> ApplyDefenceMode(List<Tile> moves)
     {
-        if (moves.Count <= 1)
+        if (moves.Count == 0)
             return moves;
 
-        // Schrappen van laatste zet
+        // Defence = laatste stap schrappen
         moves.RemoveAt(moves.Count - 1);
         return moves;
     }

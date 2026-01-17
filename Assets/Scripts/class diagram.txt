@@ -1,0 +1,152 @@
+Alleen Pathfinding
+BoardManager.CalculatePath(piece, targetTile)
+    |
+    |---> current = piece.position
+    |
+    |---> openSet ------------------------------+
+    |---> closedSet ----------------------------+
+    |
+    |---> while current != targetTile:          |
+    |         |                                 |
+    |         |---> neighbors = GetNeighbors(current)
+    |         |         |
+    |         |         '---> BoardManager.GetTile(x,y)
+    |         |
+    |         |---> for each neighbor:
+    |         |         |
+    |         |         '---> if piece.IsValidStep(current, neighbor)
+    |         |                     |
+    |         |                     '---> piece-specific rules
+    |         |
+    |         '---> add neighbor to openSet
+    |
+    |---> reconstruct path --------------------> path[]
+    |
+    '---> return path
+
+Alleen Defender‑Follow‑Logic
+BoardManager.CalculatePath(piece, targetTile, moveMode)
+    |
+    |---> path = A*-achtige berekening
+    |
+    |---> if moveMode == DEFENCE:
+    |         |
+    |         '---> moves = piece.ConvertPathToMoves(path)
+    |                     |
+    |                     '---> (dx, dy) per stap
+    |
+    |         '---> adjusted = piece.ApplyDefenceMode(moves)
+    |                     |
+    |                     |---> laatste stap verwijderen
+    |                     '---> eindigen 1 tile vóór targetTile
+    |
+    '---> return adjustedMoves
+
+Class‑Diagram (structuur)
++------------------+
+|   BoardManager   |
++------------------+
+| selectedPiece    |
+| highlightedTiles |
++------------------+
+| SelectPiece()    |
+| HighlightMoves() |
+| OnTileClicked()  |
+| CalculatePath()  |
+| MoveAlongPath()  |
+| GetTile()        |
+| GetNeighbors()   |
++------------------+
+
++------------------+
+|     Piece        |
++------------------+
+| x, y             |
+| team             |
+| type             |
+| moveMode         |
++------------------+
+| GetLegalMoves()  |
+| ConvertPathToMoves() |
+| ApplyDefenceMode()   |
+| IsValidStep()    |
+| GetMovementNeighbors() |
++------------------+
+
++------------------+
+|     Pawn         |
++------------------+
+| (inherits Piece) |
++------------------+
+| GetLegalMoves()  |
+| IsValidStep()    |
++------------------+
+
++------------------+
+|   PieceView      |
++------------------+
+| piece            |
++------------------+
+| OnMouseDown()    |
+| SetSelected()    |
++------------------+
+
++------------------+
+|  HighlightClick  |
++------------------+
+| targetTile       |
++------------------+
+| OnMouseDown()    |
++------------------+
+
++------------------+
+|      Tile        |
++------------------+
+| x, y             |
+| occupant         |
+| reservedBy       |
+| highlighted      |
++------------------+
+| SetHighlight()   |
++------------------+
+
+Component‑Diagram (architectuur op hoog niveau)
++-----------------------------------------------------------+
+|                       Game Layer                          |
+|                                                           |
+|   +------------------+       +------------------+         |
+|   |   PieceView      |       | HighlightClick   |         |
+|   +------------------+       +------------------+         |
+|           |                          |                   |
+|           | user input               | user input        |
+|           v                          v                   |
+|   +---------------------------------------------------+  |
+|   |                   BoardManager                    |  |
+|   +---------------------------------------------------+  |
+|           | calculate path       | update tiles          |
+|           v                      v                       |
+|   +------------------+     +------------------+          |
+|   |      Piece       |     |      Tile        |          |
+|   +------------------+     +------------------+          |
+|                                                           |
++-----------------------------------------------------------+
+
++-----------------------------------------------------------+
+|                       Game Layer                          |
+|                                                           |
+|   +------------------+       +------------------+         |
+|   | InputController  |       |   PieceView      |         |
+|   +------------------+       +------------------+         |
+|           |                          |                   |
+|           | keyboard input           | mouse input       |
+|           v                          v                   |
+|   +---------------------------------------------------+  |
+|   |                   BoardManager                    |  |
+|   +---------------------------------------------------+  |
+|           | calculate path       | update tiles          |
+|           v                      v                       |
+|   +------------------+     +------------------+          |
+|   |      Piece       |     |      Tile        |          |
+|   +------------------+     +------------------+          |
+|                                                           |
++-----------------------------------------------------------+
